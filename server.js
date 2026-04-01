@@ -7,28 +7,39 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Ta clé API
-const genAI = new GoogleGenerativeAI("AIzaSyCIMCDXdBQAEn60vJgloTHveo3FQ_BPw7k");
+// 🔐 clé API sécurisée (NE PAS mettre en dur)
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.post('/terminal', async (req, res) => {
     const { command } = req.body;
 
     if (command.startsWith("ai ")) {
         try {
-            // Utilisation du modèle flash sans préciser de version compliquée
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-            const prompt = command.replace("ai ", "");
-            
-            const result = await model.generateContent(`Donne uniquement la commande bash pour : ${prompt}`);
-            const response = await result.response;
-            const text = response.text();
-            
-            // Nettoyage de la commande (enlève les ```bash etc)
-            const finalCmd = text.replace(/```bash|```/g, "").trim();
-            
-            exec(finalCmd, (error, stdout, stderr) => {
-                res.json({ output: `🤖 IA exécute : ${finalCmd}\n\n${stdout || stderr || "Effectué !"}` });
+            const model = genAI.getGenerativeModel({
+                model: "gemini-1.5-flash-latest" // ✅ modèle corrigé
             });
+
+            const prompt = command.replace("ai ", "");
+
+            const result = await model.generateContent(
+                `Donne uniquement une commande bash simple et SÉCURISÉE pour : ${prompt}`
+            );
+
+            const text = result.response.text();
+            const finalCmd = text.replace(/```bash|```/g, "").trim();
+
+            // 🔒 sécurité minimale
+            const forbidden = ["rm", "shutdown", "reboot", "mkfs", "dd"];
+            if (forbidden.some(cmd => finalCmd.includes(cmd))) {
+                return res.json({ output: "❌ Commande refusée (sécurité)" });
+            }
+
+            exec(finalCmd, (error, stdout, stderr) => {
+                res.json({
+                    output: `🤖 IA exécute : ${finalCmd}\n\n${stdout || stderr || "Effectué !"}`
+                });
+            });
+
         } catch (e) {
             res.json({ output: "Erreur IA : " + e.message });
         }
@@ -40,4 +51,4 @@ app.post('/terminal', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Serveur prêt` ));
+app.listen(PORT, () => console.log(`Serveur prêt sur ${PORT}`));
