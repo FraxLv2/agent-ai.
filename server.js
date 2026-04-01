@@ -7,36 +7,37 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Ta clé est configurée ici
+// Ta clé API
 const genAI = new GoogleGenerativeAI("AIzaSyCIMCDXdBQAEn60vJgloTHveo3FQ_BPw7k");
 
 app.post('/terminal', async (req, res) => {
     const { command } = req.body;
 
-    // Commande IA : commence par "ai "
     if (command.startsWith("ai ")) {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const prompt = command.replace("ai ", "");
-        
         try {
-            const result = await model.generateContent(`Tu es un agent expert Linux. L'utilisateur veut : ${prompt}. 
-            Donne UNIQUEMENT la commande bash, sans texte autour, sans bloc de code.`);
+            // Utilisation du modèle flash sans préciser de version compliquée
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            const prompt = command.replace("ai ", "");
+            
+            const result = await model.generateContent(`Donne uniquement la commande bash pour : ${prompt}`);
             const response = await result.response;
-            const finalCmd = response.text().trim().replace(/```bash|```/g, ""); // Nettoyage au cas où
+            const text = response.text();
+            
+            // Nettoyage de la commande (enlève les ```bash etc)
+            const finalCmd = text.replace(/```bash|```/g, "").trim();
             
             exec(finalCmd, (error, stdout, stderr) => {
-                res.json({ output: `🤖 IA exécute : ${finalCmd}\n\nRésultat :\n${stdout || stderr || "Terminé avec succès."}` });
+                res.json({ output: `🤖 IA exécute : ${finalCmd}\n\n${stdout || stderr || "Effectué !"}` });
             });
         } catch (e) {
             res.json({ output: "Erreur IA : " + e.message });
         }
     } else {
-        // Commande manuelle
         exec(command, (error, stdout, stderr) => {
-            res.json({ output: stdout || stderr || "Action effectuée." });
+            res.json({ output: stdout || stderr || "OK." });
         });
     }
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Serveur actif sur port ${PORT}`));
+app.listen(PORT, () => console.log(`Serveur prêt` ));
