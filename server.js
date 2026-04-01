@@ -7,7 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Utilise la variable sécurisée de Railway
+// Utilise la clé API cachée dans Railway
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.post('/terminal', async (req, res) => {
@@ -15,21 +15,22 @@ app.post('/terminal', async (req, res) => {
 
     if (command.startsWith("ai ")) {
         try {
-            // On utilise le nom le plus simple, c'est celui qui fonctionne le mieux actuellement
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            // ON CHANGE ICI : gemini-pro est le plus compatible
+            const model = genAI.getGenerativeModel({ model: "gemini-pro" });
             const prompt = command.replace("ai ", "");
             
-            const result = await model.generateContent(`Donne UNIQUEMENT la commande bash pour : ${prompt}. Pas de blabla.`);
+            const result = await model.generateContent(`Donne UNIQUEMENT la commande linux bash pour : ${prompt}. Pas de texte, pas de blabla.`);
             const response = await result.response;
             const text = response.text();
             
-            const finalCmd = text.replace(/```bash|```/g, "").trim();
+            // Nettoyage des caractères bizarres
+            const finalCmd = text.replace(/```bash|```|`/g, "").trim();
             
             exec(finalCmd, (error, stdout, stderr) => {
-                res.json({ output: `🤖 IA exécute : ${finalCmd}\n\n${stdout || stderr || "Effectué !"}` });
+                res.json({ output: `🤖 IA exécute : ${finalCmd}\n\n${stdout || stderr || "Opération réussie !"}` });
             });
         } catch (e) {
-            res.json({ output: "Erreur IA : " + e.message + " | Vérifie que ta clé API est bien active dans Railway." });
+            res.json({ output: "Erreur IA : " + e.message });
         }
     } else {
         exec(command, (error, stdout, stderr) => {
@@ -39,4 +40,4 @@ app.post('/terminal', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`Serveur opérationnel`));
+app.listen(PORT, () => console.log(`Prêt !`));
