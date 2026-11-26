@@ -39,7 +39,12 @@ def seq(d):
     fs = sorted(glob.glob(os.path.join(RD, d, '*.png')))
     return fs
 
-SEQ = {k: seq(d) for k, d in [('intro', 'intro_60'), ('freeze', 'freeze_60'), ('bullet', 'bullet')]}
+SEQ = {k: seq(d) for k, d in [('intro', 'intro_60'), ('freeze', 'freeze_60'), ('bullet', 'bullet'), ('sniper', 'sniper')]}
+SLOW = sorted(glob.glob(os.path.join(WK, 'slow_sn', '*.png')))
+TRANS = {c: sorted(glob.glob(os.path.join(RD, 'trans', f'{c:.2f}', '*.png'))) for c, _ in T.TRANS3D}
+_dz = np.load(os.path.join(WK, 'depth_seq.npz'))
+DEPTH = dict(zip(_dz['idx'].tolist(), _dz['d']))
+print('slow', len(SLOW), {c: len(v) for c, v in TRANS.items()}, 'depth', len(DEPTH))
 print({k: len(v) for k, v in SEQ.items()})
 
 
@@ -59,6 +64,51 @@ def load_seq(kind, tau, dur):
     if im.shape[1] != W or im.shape[0] != AH:
         im = cv2.resize(im, (W, AH), interpolation=cv2.INTER_LANCZOS4)
     return im.astype(np.float32) / 255
+
+
+# ---------------- caméra 3D sur le gameplay : parallaxe par profondeur ----------------
+GX, GY = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(AH, dtype=np.float32))
+TOPMASK = np.clip((GY - 30) / 40, 0, 1)   # le bandeau HUD du haut ne bouge pas
+
+def parallax(img, x):
+    for a, b, amp, sgn in T.PARALLAX:
+        if a <= x < b:
+            break
+    else:
+        return img
+    d = DEPTH.get(int(round(x * FPS)))
+    if d is None:
+        return img
+    u = (x - a) / (b - a)
+    fade = min(1.0, u / 0.12, (1 - u) / 0.12)        # retour à la vue d'origine aux bords du plan
+    dx = amp * sgn * (2 * u - 1) * fade
+    dy = -amp * 0.3 * math.sin(math.pi * u) * fade
+    z = 1 + 0.045 * fade
+    dd = cv2.resize(d.astype(np.float32), (W, AH), interpolation=cv2.INTER_LINEAR)
+    dd = (dd - np.median(dd)) * TOPMASK
+    mx = (GX - W / 2) / z + W / 2 - dd * dx
+    my = (GY - AH / 2) / z + AH / 2 - dd * dy
+    return cv2.remap(img, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+
+
+def trans_frame(x):
+    for c, _ in T.TRANS3D:
+        if c - T.TRANS_HALF <= x < c + T.TRANS_HALF and TRANS[c]:
+            i = min(len(TRANS[c]) - 1, int((x - (c - T.TRANS_HALF)) * FPS))
+            im = cv2.imread(TRANS[c][i])
+            return cv2.resize(im, (W, AH), interpolation=cv2.INTER_LANCZOS4).astype(np.float32) / 255
+    return None
+
+SLOWMASK = mask[430:510]
+SLOWB = sorted(glob.glob(os.path.join(WK, 'slow_sn_blend', '*.png')))
+def slow_frame(tau, dur):
+    # 25 % du temps : montée de la lunette à ~0,5x (fondu) ; 75 % : ralenti extrême ~0,09x sur la visée (interpolé)
+    u = tau / dur
+    src = 9.40 + (0.17 * u / 0.25 if u < 0.25 else 0.17 + 0.09 * (u - 0.25) / 0.75)
+    i = min(len(SLOW) - 1, int((src - 9.40) * 300))
+    f = cv2.imread((SLOWB if src < 9.56 else SLOW)[i])
+    f[430:510] = cv2.inpaint(f[430:510], SLOWMASK, 3, cv2.INPAINT_TELEA)
+    return up(f)
 
 
 # ---------------- rampes de vitesse ----------------
@@ -275,9 +325,18 @@ for k in T.KILLS:
 for c in T.CUTS:
     o = src_to_out(c)
     if o is not None:
-        EV += [(o, 'flash', 0.28 if c != 15.7 else 0.0, 0.05, 0.12), (o, 'dirblur', 70, 0.08, 0.10), (o, 'zoom', 0.07, 0.08, 0.12), (o, 'chroma', 10, 0.06, 0.12), (o, 'leak', 0.8, 0.1, 0.3)]
+        if any(abs(c - tc) < 0.05 for tc, _ in T.TRANS3D):
+            EV += [(o, 'flash', 0.12, 0.03, 0.1), (o, 'leak', 0.6, 0.15, 0.3)]
+            continue
+        EV += [(o, 'flash', 0.28 if c != 15.6 else 0.0, 0.05, 0.12), (o, 'dirblur', 70, 0.08, 0.10), (o, 'zoom', 0.07, 0.08, 0.12), (o, 'chroma', 10, 0.06, 0.12), (o, 'leak', 0.8, 0.1, 0.3)]
 # transitions entre segments
-tI = seg_t['src'][0]; tF = seg_t['freeze'][0]; tF2 = seg_t['src'][1]; tB = seg_t['bullet'][0]; tB2 = seg_t['src'][2]; tO = seg_t['outro'][0]
+tI = seg_t['src'][0]; tF = seg_t['freeze'][0]; tF2 = seg_t['src'][2]; tB = seg_t['bullet'][0]; tB2 = seg_t['src'][3]; tO = seg_t['outro'][0]
+tS = seg_t['slow'][0]; tN = seg_t['sniper'][0]; tN2 = seg_t['src'][1]
+SN_IMPACT = tN + (T.SNIPER_N - 15) / FPS
+EV += [(tS, 'flash', 0.25, 0.04, 0.2), (tS, 'chroma', 6, 0.04, 0.25),
+       (tN, 'flash', 0.7, 0.06, 0.3), (tN, 'chroma', 12, 0.05, 0.3), (tN, 'zoomblur', 0.05, 0.08, 0.15),
+       (SN_IMPACT, 'flash', 0.35, 0.0, 0.18), (SN_IMPACT, 'shake', 18, 0, 0.35), (SN_IMPACT, 'chroma', 10, 0, 0.3),
+       (tN2, 'flash', 0.95, 0.15, 0.25), (tN2, 'shake', 16, 0, 0.3), (tN2, 'chroma', 12, 0, 0.25)]
 EV += [(tI, 'flash', 0.9, 0.12, 0.25), (tI, 'zoomblur', 0.12, 0.15, 0.2), (tI, 'shake', 16, 0, 0.3), (tI, 'leak', 1.0, 0.1, 0.5),
        (tF, 'flash', 0.55, 0.06, 0.25), (tF, 'chroma', 12, 0.05, 0.3), (tF, 'zoomblur', 0.06, 0.1, 0.15),
        (tF2, 'flash', 0.4, 0.06, 0.15), (tF2, 'chroma', 9, 0.06, 0.2), (tF2, 'zoom', 0.05, 0.1, 0.2),
@@ -323,9 +382,21 @@ def frame_at(t):
         dust = 0.5
     elif kind == 'src':
         x = p['t0'] + tau
-        img, speed = src_image(x, p['t0'], p['t1'])
-        if x < 5.5:
+        img = trans_frame(x)
+        if img is None:
+            img, speed = src_image(x, p['t0'], p['t1'])
+            img = parallax(img, x)
+        if x < 5.0:
             dust = 0.35
+    elif kind == 'slow':   # super ralenti pendant la visée : lente poussée vers la lunette
+        u = tau / dur
+        img = affine(slow_frame(tau, dur), 1 + 0.07 * u * u)
+        sat = 1.0; cool = 0.15 * u
+    elif kind == 'sniper':
+        img = load_seq('sniper', tau, dur)
+        if img is None:
+            img = up(SRC[int(T.SNIPER_B * FPS)])
+        sat = 1.15
     elif kind == 'freeze':
         img = load_seq('freeze', tau, dur)
         if img is None:

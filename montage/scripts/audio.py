@@ -134,6 +134,25 @@ for t0, (kind, dur, p) in starts:
     elif kind == 'src':
         a, b = sec(p['t0']), sec(p['t1'])
         add(OUT, fade(A[a:b], 0.006, 0.006), t0)
+    elif kind == 'slow':   # bloc sniper = ralenti + freeze 3D (durée = 10 temps + 0,26 s source)
+        Dn = (T.SLOW_N + T.SNIPER_N) / T.FPS
+        loop = A[sec(T.SNIPER_B - Dn):sec(T.SNIPER_B)]
+        m = fade(muffle(loop, 750), 0.03, 0.03)
+        # pendant la visée le son s'étouffe progressivement, il reste étouffé pendant le freeze
+        add(OUT, m * 0.85, t0)
+        add(OUT, riser(dur, 0.32), t0)
+        hb = boom(0.45, 0.35)
+        for k in range(3):   # battements de cœur pendant la visée
+            add(OUT, hb, t0 + 0.12 + k * dur / 3)
+        tn = t0 + dur
+        SN = T.SNIPER_N / T.FPS
+        add(OUT, boom(1.6, 0.85), tn)
+        add(OUT, whoosh(0.35, False, 0.45), tn)
+        add(OUT, whizz(SN - 0.35, 0.6), tn + 0.08)
+        add(OUT, boom(1.0, 0.8), tn + (T.SNIPER_N - 15) / T.FPS)
+        add(OUT, whoosh(0.3, True, 0.4), tn + SN - 0.28)
+    elif kind == 'sniper':
+        pass
     elif kind in ('freeze', 'bullet'):
         at = T.FREEZE_AT if kind == 'freeze' else T.BULLET_AT
         nb = T.FREEZE_BEATS if kind == 'freeze' else T.BULLET_BEATS
